@@ -11,7 +11,7 @@ def readCallback(sensorID, temp):
 def readScaleCallback(weight):
 	print("Weight: %0.2f" % weight)
 
-parser = protocolParser('COM7', 115200)
+parser = protocolParser('COM4', 115200)
 parser.setCmdCallback(1, searchCallback)
 parser.setCmdCallback(2, readCallback)
 parser.setCmdCallback(10, readScaleCallback)
