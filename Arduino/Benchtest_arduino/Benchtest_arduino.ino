@@ -3,7 +3,7 @@
 #include <Wire.h>
 #include "HX711.h"
 
-#define DEFAULT_DEBUG_MODE 1
+#define DEFAULT_DEBUG_MODE 0
 #define DEFAULT_PROTOCOL_MODE 1
 
 #define DATA_PIN_NUM 10
@@ -11,11 +11,12 @@
 #define LOADCELL_DATA_PIN_NUM 12
 #define LED_PIN_NUM 13
 
+#define TEMP_MAX 65
 #define CMD_BUF_SIZE  64
 #define PARAM_BUF_SIZE 8
 #define BAUD_RATE 115200
 #define CMDS_COUNT 13
-#define SENSORS_MAX 20
+#define SENSORS_MAX 15
 #define SCRATCHPAD_BYTES_COUNT 9
 #define ROM_SIZE 8
 #define CMD_CHARS_MAX 10
@@ -57,7 +58,9 @@
 #define CURRENT_SENSOR_MV_PER_AMP 185
 #define PWM_MAX_VALUE 255
 #define CAL_RESOLUTION 10
-#define CURRENT_MAX 5.7
+#define CURRENT_MAX_SETPOINT 5.0
+#define CURRENT_MAX_ABSOLUTE 5.5
+#define CURRENT_MAX_TOTAL 16.5
 
 #define FLOAT_BYTE_COUNT 4
 #define EEPROM_PTSX_BASE_ADDR 0
@@ -88,14 +91,8 @@ bool protocolMode = DEFAULT_PROTOCOL_MODE;
 bool readReadyToSend = 0;
 byte serialEventState = 0;
 bool serialParserEnable = 1;
-//float currentControlSlope[CURRENT_CHANNELS_COUNT][CAL_RESOLUTION];
-//float currentControlOffset[CURRENT_CHANNELS_COUNT][CAL_RESOLUTION];
-//unsigned char currentControlPin[CURRENT_CHANNELS_COUNT] = { 
-//  CHANNEL0_PIN,
-//  CHANNEL1_PIN,
-//  CHANNEL2_PIN,
-//  CHANNEL3_PIN
-//};
+bool overTemp = 0;
+bool overCurrent = 0;
 
 struct currentChannel_t
 {
@@ -164,7 +161,7 @@ struct cmdType cmdList[CMDS_COUNT]=
   { 0x03, "start",      "Get temperature continuously" },
   { 0x04, "stop",       "Stop continuous temperature" }, 
   { 0x05, "resetTemp",  "Reset sensor list" },
-  { 0x06, "mode",       "Toggle human/machine mode [0/1]"},
+  { 0x06, "mode",       "0: protocol & debug, 1: protocol, 2: debug"},
   { 0x07, "list",       "Print sensors list" },
   { 0x08, "setCurrent", "Set the current of TEC #"},
   { 0x09, "calCurrent", "Calibrate current control"},
@@ -195,14 +192,11 @@ void initScale(void);
 void resetScale(void);
 float readScale(byte averages);
 void calScale(void);
-
-//int readings[CURRENT_AVG_NUM] { 0 };      // the readings from the analog input
-//int readIndex = 0;              // the index of the current reading
-//int total = 0;                  // the running total
-//int average = 0;                // the average
-//float current = 0;
-//float currentSetpoint = 0;
-//int pwm = 0;
+void checkOverCurrent(void);
+void disableAllCurrent(void);
+void readCurrents(void);
+void updateCurrents(void);
+bool getCurrentUpdateDelay(void);
 
 /*/////////////////////////////////////////////////////////
 Setup
@@ -212,6 +206,12 @@ void setup()
   Serial.begin(BAUD_RATE);
   pinMode(LED_PIN_NUM, OUTPUT);
 
+  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  {
+    setCurrent(0, i);
+    analogWrite(currentChannelList[i].pwmPin, 0);
+  }
+  
   Wire.begin();
   clearLcd();
   printLcd(0, 1, ">Benchtest Oh Yeah<");
@@ -219,21 +219,7 @@ void setup()
   Serial.println(F("Program started..."));
   searchSensors();
   readOnce = 1;
-  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
-  {
-    setCurrent(0, i);
-  }
   initScale();
-    
-//  Serial.print('\n');
-//  unsigned char buf[14] = { 0x02, 14, 0x28, 0xFF, 0x71, 0x83, 0x33, 0x16, 0x03, 0x27, 0x29, 0x5C, 0xC9, 0x41 };
-//  Serial.print("CRC8: ");
-//    unsigned char buf2[2] = { 0x01, 0x01 };
-//    Serial.print("CRC8: ");
-//    Serial.println(CRC8(buf2,2), HEX);
-//  Serial.println(CRC8(buf,14), HEX);
-//  unsigned char buf2[] = { 0x28, 0xFF, 0x71, 0x83, 0x33, 0x16, 0x03, 0x27, 0x29, 0x5C, 0xC9, 0x41 };
-//  sendData(0x02 , buf2, 12);
 }
 
 /*/////////////////////////////////////////////////////////
@@ -241,7 +227,6 @@ Main
 /////////////////////////////////////////////////////////*/
 void loop()
 {
-//  Serial.println("Program started...");
   readSensors();
   sendTemp();
   
@@ -250,12 +235,9 @@ void loop()
 //  printFloatLcd(2, 0, "Weight: ", weight);
 
     readCurrents();
-    getCurrentsAvg();
   
   if(getCurrentUpdateDelay())
   {
-//    readCurrent(CHANNEL0_ADC);
-//    getCurrentAvg();
     updateCurrents();
 
     printLcd(2, 0, "CH");
@@ -273,36 +255,33 @@ void loop()
     printLcd(6, 0, "3");
     printFloatLcd(6, 4, "", (float)currentChannelList[3].average);
     printFloatLcd(6, 12, "", currentChannelList[3].current);
-//    Serial.print("PWM set to ");
-//    Serial.println(currentChannelList[0].pwm);
   }
-  
-//  delay(500);
+}
 
-  switch (programState)
+/*/////////////////////////////////////////////////////////
+checkOverTemp
+/////////////////////////////////////////////////////////*/
+void checkOverTemp(void)
+{
+  bool overTempDetected = 0;
+  for(int i=0; i<sensorsCount; i++)
   {
-    case mainState:
-
-
+    if(sensorsList[i].temp.value > TEMP_MAX)
+    {
+      overTempDetected = 1;
       break;
-    case searchState:
-      programState = mainState;
-      
-      break;
-    case tempsState:
-
-      break;
-    case infosState:
-
-      break;
-    case optionsState:
-
-      break;
-    default:
-
-      break;
+    }
   }
-
+  if(overTempDetected)
+  {
+    disableAllCurrent();
+    overTemp = 1;
+    Serial.println(F("CRITICAL: Over temperature detected!!"));
+  }
+  else
+  {
+    overTemp = 0;
+  }
 }
 
 /*/////////////////////////////////////////////////////////
@@ -377,8 +356,7 @@ void sendData(byte cmd, byte *data, byte dataLength)
     }
     Serial.write(CRC);
     Serial.flush();
-    if(debugMode)
-      Serial.print("\r\n");
+    Serial.print("\r\n");
   }
 }
 
@@ -756,8 +734,8 @@ readSensors
 /////////////////////////////////////////////////////////*/
 void readSensors()
 {
-  if(readOnce || readContinuous || readState)
-  {
+//  if(readOnce || readContinuous || readState)
+//  {
     if(sensorsCount)
     {
       byte crc;
@@ -769,7 +747,7 @@ void readSensors()
           {
             cursorHome();
           }
-          Serial.println(F("\nReading sensors..."));
+//          Serial.println(F("\nReading sensors..."));
           ds.reset();
           ds.skip();  //address all sensors
           ds.write(0x44, 1); // start conversion, with parasite power on at the end
@@ -815,34 +793,29 @@ void readSensors()
               else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
               //// default is 12 bit resolution, 750 ms conversion time
               sensorsList[i].temp.value = (float)raw / 16.0;
-              Serial.print(F("Temperature "));
-              Serial.print(i, DEC);
-              Serial.print(": ");
-              Serial.println(sensorsList[i].temp.value);
+            }
+          }
 
-//              switch(i)
-//              {
-//                case 0:
-//                  printFloatLcd(2, 0, "Temp 1: ", sensorsList[i].temp.value);
-//                break;
-//                case 1:
-//                  printFloatLcd(3, 0, "Temp 2: ", sensorsList[i].temp.value);
-//                break;
-//                case 2:
-//                  printFloatLcd(4, 0, "Temp 3: ", sensorsList[i].temp.value);
-//                break;
-//                case 3:
-//                  printFloatLcd(5, 0, "Temp 4: ", sensorsList[i].temp.value);
-//                break;
-//                default:
-//                break;
-//              }
+          checkOverTemp();
+                    
+          if(readOnce || readContinuous)
+          {
+            readReadyToSend = 1;
+            if(debugMode)
+            {
+              Serial.print("\n");
+              for(i=0; i<sensorsCount; i++)
+              {
+                Serial.print(F("Temperature "));
+                Serial.print(i, DEC);
+                Serial.print(": ");
+                Serial.println(sensorsList[i].temp.value);
+              }
             }
           }
           readOnce = 0;
           readState = 0;
-          readReadyToSend = 1;
-        break;
+          break;
       }
     }
     else
@@ -850,7 +823,7 @@ void readSensors()
       readOnce = 0;
       Serial.println(F("\nSensor list is empty, execute \"search\" command first"));
     }
-  }
+//  }
 }
 
 /*/////////////////////////////////////////////////////////

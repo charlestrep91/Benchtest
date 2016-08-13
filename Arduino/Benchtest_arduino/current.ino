@@ -1,50 +1,109 @@
-void readCurrents()
+/*/////////////////////////////////////////////////////////
+checkOverCurrent
+/////////////////////////////////////////////////////////*/
+void checkOverCurrent(void)
+{
+  bool overCurrentDetected = 0;
+  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  {
+    if(sensorsList[i].temp.value > TEMP_MAX)
+    {
+      overCurrentDetected = 1;
+      break;
+    }
+  }
+  if(overCurrentDetected)
+  {
+    disableAllCurrent();
+    overCurrent = 1;
+    Serial.println(F("Over temperature detected!!"));
+  }
+  else
+  {
+    overCurrent = 0;
+  }
+}
+
+void disableAllCurrent(void)
+{
+  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  {
+    analogWrite(currentChannelList[i].pwmPin, 0);
+    currentChannelList[i].currentSetpoint = 0;
+    currentChannelList[i].pwm = 0;
+  }
+}
+
+void readCurrents(void)
 {
   int adc;
-  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  int i;
+  float totalCurrent = 0;
+  bool overCurrentDetected = 0;
+  for(i=0; i<CURRENT_CHANNELS_COUNT; i++)
   {
     adc = analogRead(currentChannelList[i].adcPin) - currentChannelList[i].adcOffset;
     currentChannelList[i].total = currentChannelList[i].total - currentChannelList[i].readings[currentChannelList[i].readIndex];
     currentChannelList[i].readings[currentChannelList[i].readIndex] = adc;
     currentChannelList[i].total = currentChannelList[i].total + currentChannelList[i].readings[currentChannelList[i].readIndex];
     currentChannelList[i].readIndex = currentChannelList[i].readIndex + 1;
-  
     if (currentChannelList[i].readIndex >= CURRENT_AVG_NUM) 
     {
       currentChannelList[i].readIndex = 0;
     }
-  }
-}
 
-void getCurrentsAvg(void)
-{
-  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
-  {
     currentChannelList[i].average = currentChannelList[i].total / CURRENT_AVG_NUM;
     currentChannelList[i].current = ( ( ((currentChannelList[i].average / 1024.0) * 5000) - 2500) / CURRENT_SENSOR_MV_PER_AMP );
+    totalCurrent += currentChannelList[i].current;
+    if(currentChannelList[i].current > CURRENT_MAX_ABSOLUTE || totalCurrent > CURRENT_MAX_TOTAL)
+    {
+      overCurrentDetected = 1;
+      break;
+    }
+  }
+
+  if(overCurrentDetected)
+  {
+    disableAllCurrent();
+    overCurrent = 1;
+
+    Serial.print(F("CRITICAL: "));
+    if(totalCurrent > CURRENT_MAX_TOTAL)
+    {
+      Serial.println(F("Total current above limit!!"));
+    }
+    else
+    {
+      Serial.print(F("Over current detected on channel "));
+      Serial.print(i);
+      Serial.println("!!");
+    }
+  }
+  else
+  {
+    overCurrent = 0;
   }
 }
 
 void updateCurrents(void)
 {
-  float error;
-  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  if(!overTemp && !overCurrent)
   {
-    error = currentChannelList[i].currentSetpoint - currentChannelList[i].current;
-    currentChannelList[i].pwm += round(error * CURRENT_KP_GAIN * CURRENT_PWM_FACTOR);
-    if(currentChannelList[i].pwm < 0)
+    float error;
+    for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
     {
-      currentChannelList[i].pwm = 0;
+      error = currentChannelList[i].currentSetpoint - currentChannelList[i].current;
+      currentChannelList[i].pwm += round(error * CURRENT_KP_GAIN * CURRENT_PWM_FACTOR);
+      if(currentChannelList[i].pwm < 0)
+      {
+        currentChannelList[i].pwm = 0;
+      }
+      if(currentChannelList[i].pwm > PWM_MAX_VALUE)
+      {
+        currentChannelList[i].pwm = PWM_MAX_VALUE;
+      }
+      analogWrite(currentChannelList[i].pwmPin, currentChannelList[i].pwm);
     }
-    if(currentChannelList[i].pwm > PWM_MAX_VALUE)
-    {
-      currentChannelList[i].pwm = PWM_MAX_VALUE;
-    }
-    analogWrite(currentChannelList[i].pwmPin, currentChannelList[i].pwm);
-//    Serial.print(F("error: "));
-//    Serial.println(error);
-//    Serial.print(F("pwm: "));
-//    Serial.println(currentChannelList[i].pwm);
   }
 }
 
@@ -155,10 +214,10 @@ void setCurrent(float current, unsigned char channel)
     Serial.println(F("Current specified out of range! Setting to min value (0A)"));
     current = 0;
   }
-  else if(current > CURRENT_MAX)
+  else if(current > CURRENT_MAX_SETPOINT)
   {
-    Serial.print(F("Current specified out of range! Setting to max value (")); Serial.print(CURRENT_MAX); Serial.println(F(")"));
-    current = CURRENT_MAX;
+    Serial.print(F("Current specified out of range! Setting to max value (")); Serial.print(CURRENT_MAX_SETPOINT); Serial.println(F(")"));
+    current = CURRENT_MAX_SETPOINT;
   }
 
   currentChannelList[channel].currentSetpoint = current;
