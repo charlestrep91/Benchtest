@@ -129,7 +129,22 @@ void setCurrent(int current, unsigned char channel)
     current = CURRENT_MAX_SETPOINT;
   }
 
-  currentChannelList[channel].currentSetpoint = current;
-
-  Serial.print(F("Channel ")); Serial.print(channel); Serial.print(F(" set to ")); Serial.print((float)current / CURRENT_VAR_RATIO); Serial.print(F("A\n"));
+  if(channel == 255)
+  {
+    for(int i; i<CURRENT_CHANNELS_COUNT; i++)
+    {
+      currentChannelList[i].currentSetpoint = current;
+      Serial.print(F("Channel ")); Serial.print(i); Serial.print(F(" set to ")); Serial.print((float)current / CURRENT_VAR_RATIO); Serial.print(F("A\n"));
+    }
+  }
+  else if(channel > (CURRENT_CHANNELS_COUNT-1))
+  {
+    Serial.println(F("Channel specified out of range!"));
+    return;
+  }
+  else
+  {
+    currentChannelList[channel].currentSetpoint = current;
+    Serial.print(F("Channel ")); Serial.print(channel); Serial.print(F(" set to ")); Serial.print((float)current / CURRENT_VAR_RATIO); Serial.print(F("A\n"));
+  }
 }

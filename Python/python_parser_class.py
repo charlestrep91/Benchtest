@@ -6,6 +6,8 @@ import array
 import io
 import threading
 
+currentRatio		= 100
+
 helpCmdByte			= 0x00
 searchCmdByte 		= 0x01
 readCmdByte 		= 0x02
@@ -15,7 +17,7 @@ resetCmdByte 		= 0x05
 modeCmdByte 		= 0x06
 listCmdByte 		= 0x07
 setCurrentCmdByte 	= 0x08
-calCurrentCmdByte 	= 0x09
+getCurrentCmdByte 	= 0x09
 readScaleCmdByte 	= 0x0a
 calScaleCmdByte		= 0x0b
 resetScaleCmdByte	= 0x0c
@@ -24,7 +26,7 @@ class protocolParser(threading.Thread):
 	startByte = 0xF0
 	ackByte = 0xF1
 	baudrate = 115200
-	minCmdLength = 4
+	minCmdLength = 1
 	printAscii = 0
 	printDebug = 0
 	port = 0
@@ -153,7 +155,12 @@ class protocolParser(threading.Thread):
 			try: self.callback8()
 			except AttributeError: print("Error: callback8 not assigned!")
 		elif(cmd == 0x09):
-			try: self.callback9()
+			channel = data[0]
+			tempBytes = [0, 0, data[2], data[1]]	#order of bytes reversed because of endianess
+			tmp = struct.pack('4B', *tempBytes)
+			currentFloat = struct.unpack('>i', tmp)
+			currentFloat = currentFloat[0] / currentRatio
+			try: self.callback9(channel, currentFloat)
 			except AttributeError: print("Error: callback9 not assigned!")
 		elif(cmd == 0x0a):
 			tempBytes = [data[3], data[2], data[1], data[0]]	#order of bytes reversed because of endianess
@@ -218,8 +225,8 @@ class protocolParser(threading.Thread):
 		data = bytearray([setCurrentCmdByte, int(channel), int(current*10)])
 		self.sendCmd(data)
 
-	def calCurrentCmd(self):
-		data = bytearray([calCurrentCmdByte])
+	def getCurrentCmd(self):
+		data = bytearray([getCurrentCmdByte])
 		self.sendCmd(data)
 
 	def readScaleCmd(self):

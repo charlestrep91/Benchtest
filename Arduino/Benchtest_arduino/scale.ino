@@ -4,10 +4,10 @@ void initScale(void)
   long offset;
   EEPROM.get(EEPROM_SCALE_RATIO_BASE_ADDR, ratio);
   EEPROM.get(EEPROM_SCALE_OFFSET_BASE_ADDR, offset);
-  Serial.print(F("weight ratio: "));
-  Serial.println(ratio);
-  Serial.print(F("weight offset: "));
-  Serial.println(offset);
+//  Serial.print(F("weight ratio: "));
+//  Serial.println(ratio);
+//  Serial.print(F("weight offset: "));
+//  Serial.println(offset);
   scale.set_scale(ratio);
   scale.set_offset(offset);
 }

@@ -50,8 +50,8 @@
 #define CURRENT_CAL_TIMEOUT_MS  20000
 #define LOADCELL_CAL_TIMEOUT_MS 60000
 #define CURRENT_UPDATE_DELAY_MS 250
-#define CURRENT_CHANNELS_COUNT 4
-#define CURRENT_AVG_NUM 30
+#define CURRENT_CHANNELS_COUNT 4        //must be less than 255
+#define CURRENT_AVG_NUM 20
 #define CURRENT_THRESHOLD 0.05
 #define CURRENT_KP_GAIN 0.1
 #define CURRENT_PWM_FACTOR 51
@@ -164,17 +164,17 @@ struct cmdType cmdList[CMDS_COUNT]=
 {
   { 0x00, "help",       "Lists available commands" },
   { 0x01, "search",     "Search available sensors" },
-  { 0x02, "readTemp",   "Get temperature once" },
+  { 0x02, "readtemp",   "Get temperature once" },
   { 0x03, "start",      "Get temperature continuously" },
   { 0x04, "stop",       "Stop continuous temperature" }, 
-  { 0x05, "resetTemp",  "Reset sensor list" },
+  { 0x05, "resettemp",  "Reset sensor list" },
   { 0x06, "mode",       "0: protocol & debug, 1: protocol, 2: debug"},
   { 0x07, "list",       "Print sensors list" },
-  { 0x08, "setCurrent", "Set the current of TEC #"},
-  { 0x09, "getCurrent", "Get the current value of the TECs"},
-  { 0x0a, "readScale",  "Get the scale weight value"},
-  { 0x0b, "calScale",   "Calibrate the scale"},
-  { 0x0c, "resetScale", "Reset the scale value to zero"}
+  { 0x08, "setcurrent", "Set the current of TEC #"},
+  { 0x09, "getcurrent", "Get the current value of the TECs"},
+  { 0x0a, "readscale",  "Get the scale weight value"},
+  { 0x0b, "calscale",   "Calibrate the scale"},
+  { 0x0c, "resetscale", "Reset the scale value to zero"}
 };
 
 programStateType programState = mainState;
@@ -299,12 +299,13 @@ sendCurrent
 /////////////////////////////////////////////////////////*/
 void sendCurrent(void)
 {
-  byte dataBuf[ROM_SIZE];
+  byte dataBuf[INT_BYTE_COUNT + 1];
   for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
   {
-    for(int j=0; j<INT_BYTE_COUNT; j++)
+    dataBuf[0] = i;                         //first byte is the channel #
+    for(int j=0; j<INT_BYTE_COUNT; j++)     //next are the current value bytes
     {
-      dataBuf[j] = currentChannelList[i].current.bytes[j];
+      dataBuf[j+1] = currentChannelList[i].current.bytes[j];
     }
     sendData(getCurrentCmd, dataBuf, sizeof(dataBuf));
   }
@@ -699,9 +700,16 @@ void processCommand(bool cmdType)
         switch(cmdType)
         {
           case CMD_TYPE_DEBUG:
-            channel = atoi(inputParam1Ptr);
+            if(strstr(inputParam1Ptr, "all"))
+            {
+              channel = 255;
+            }
+            else
+            {
+              channel = atoi(inputParam1Ptr); 
+            }
             current = (int)(atof(inputParam2Ptr) * CURRENT_VAR_RATIO);
-            if(channel < 0 || channel >= CURRENT_CHANNELS_COUNT)
+            if( (channel < 0 || channel >= CURRENT_CHANNELS_COUNT) && (channel != 255))
             {
               Serial.print(F("Channel selected out of range (0 - ")); Serial.print(CURRENT_CHANNELS_COUNT - 1); Serial.println(")");
               break;
@@ -723,6 +731,7 @@ void processCommand(bool cmdType)
         }
         if(debugMode)
         {
+          Serial.print(F("\n"));
           for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
           {
             Serial.print(F("Channel "));
