@@ -42,8 +42,8 @@
 #define CHANNEL1_ADC_PIN 1
 #define CHANNEL2_ADC_PIN 2
 #define CHANNEL3_ADC_PIN 3
-#define CHANNEL0_ADC_OFFSET 8
-#define CHANNEL1_ADC_OFFSET 11
+#define CHANNEL0_ADC_OFFSET -4
+#define CHANNEL1_ADC_OFFSET 0
 #define CHANNEL2_ADC_OFFSET -2
 #define CHANNEL3_ADC_OFFSET -2
 
@@ -58,11 +58,13 @@
 #define CURRENT_SENSOR_MV_PER_AMP 185
 #define PWM_MAX_VALUE 255
 #define CAL_RESOLUTION 10
-#define CURRENT_MAX_SETPOINT 5.0
-#define CURRENT_MAX_ABSOLUTE 5.5
-#define CURRENT_MAX_TOTAL 16.5
+#define CURRENT_VAR_RATIO 100 //ratio by which current variables are multiplied to fit int types, ex: 3.5A = 350 if ratio is 100
+#define CURRENT_MAX_SETPOINT 5.0 * CURRENT_VAR_RATIO
+#define CURRENT_MAX_ABSOLUTE 5.5 * CURRENT_VAR_RATIO
+#define CURRENT_MAX_TOTAL 14.0 * CURRENT_VAR_RATIO
 
 #define FLOAT_BYTE_COUNT 4
+#define INT_BYTE_COUNT 2
 #define EEPROM_PTSX_BASE_ADDR 0
 #define EEPROM_SLOPE_BASE_ADDR (EEPROM_PTSX_BASE_ADDR + (FLOAT_BYTE_COUNT * CURRENT_CHANNELS_COUNT * (CAL_RESOLUTION + 1))) //for a resolution of n there is (n+1) points
 #define EEPROM_OFFSET_BASE_ADDR (EEPROM_SLOPE_BASE_ADDR + (FLOAT_BYTE_COUNT * CURRENT_CHANNELS_COUNT * CAL_RESOLUTION))
@@ -93,6 +95,7 @@ byte serialEventState = 0;
 bool serialParserEnable = 1;
 bool overTemp = 0;
 bool overCurrent = 0;
+float weight = 0;
 
 struct currentChannel_t
 {
@@ -103,9 +106,13 @@ struct currentChannel_t
   int readIndex;              // the index of the current reading
   int total;                  // the running total
   int average;                // the average
-  float current;
-  float currentSetpoint;
+  int currentSetpoint;
   int pwm;
+  union
+  {
+    int value;
+    byte bytes[INT_BYTE_COUNT];
+  }current;
 };
 
 struct currentChannel_t currentChannelList[CURRENT_CHANNELS_COUNT] = 
@@ -123,7 +130,7 @@ struct sensor {
   union
   {
     float value;
-    byte bytes[4];
+    byte bytes[FLOAT_BYTE_COUNT];
   }temp;
 };
 
@@ -147,7 +154,7 @@ enum cmdNum {
   modeCmd,
   listCmd,
   setCurrentCmd,
-  calCurrentCmd,
+  getCurrentCmd,
   readScaleCmd,
   calScaleCmd,
   resetScaleCmd
@@ -164,7 +171,7 @@ struct cmdType cmdList[CMDS_COUNT]=
   { 0x06, "mode",       "0: protocol & debug, 1: protocol, 2: debug"},
   { 0x07, "list",       "Print sensors list" },
   { 0x08, "setCurrent", "Set the current of TEC #"},
-  { 0x09, "calCurrent", "Calibrate current control"},
+  { 0x09, "getCurrent", "Get the current value of the TECs"},
   { 0x0a, "readScale",  "Get the scale weight value"},
   { 0x0b, "calScale",   "Calibrate the scale"},
   { 0x0c, "resetScale", "Reset the scale value to zero"}
@@ -197,6 +204,7 @@ void disableAllCurrent(void);
 void readCurrents(void);
 void updateCurrents(void);
 bool getCurrentUpdateDelay(void);
+void sendCurrent(void);
 
 /*/////////////////////////////////////////////////////////
 Setup
@@ -232,12 +240,13 @@ void loop()
   
 //  float weight = readScale(30);
 //  clearLcd();
-//  printFloatLcd(2, 0, "Weight: ", weight);
+//  printFloatLcd(7, 0, "Weight: ", weight);
 
-    readCurrents();
+  readCurrents();
   
   if(getCurrentUpdateDelay())
   {
+//    weight = readScale(30);
     updateCurrents();
 
     printLcd(2, 0, "CH");
@@ -245,16 +254,17 @@ void loop()
     printLcd(2, 12, "Current");
     printLcd(3, 0, "0");
     printFloatLcd(3, 4, "", (float)currentChannelList[0].average);
-    printFloatLcd(3, 12, "", currentChannelList[0].current);
+    printFloatLcd(3, 12, "", (float)currentChannelList[0].current.value/CURRENT_VAR_RATIO);
     printLcd(4, 0, "1");
     printFloatLcd(4, 4, "", (float)currentChannelList[1].average);
-    printFloatLcd(4, 12, "", currentChannelList[1].current);
+    printFloatLcd(4, 12, "", (float)currentChannelList[1].current.value/CURRENT_VAR_RATIO);
     printLcd(5, 0, "2");
     printFloatLcd(5, 4, "", (float)currentChannelList[2].average);
-    printFloatLcd(5, 12, "", currentChannelList[2].current);
+    printFloatLcd(5, 12, "", (float)currentChannelList[2].current.value/CURRENT_VAR_RATIO);
     printLcd(6, 0, "3");
     printFloatLcd(6, 4, "", (float)currentChannelList[3].average);
-    printFloatLcd(6, 12, "", currentChannelList[3].current);
+    printFloatLcd(6, 12, "", (float)currentChannelList[3].current.value/CURRENT_VAR_RATIO);
+//    printFloatLcd(7, 0, "Weight: ", weight);
   }
 }
 
@@ -285,19 +295,35 @@ void checkOverTemp(void)
 }
 
 /*/////////////////////////////////////////////////////////
+sendCurrent
+/////////////////////////////////////////////////////////*/
+void sendCurrent(void)
+{
+  byte dataBuf[ROM_SIZE];
+  for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+  {
+    for(int j=0; j<INT_BYTE_COUNT; j++)
+    {
+      dataBuf[j] = currentChannelList[i].current.bytes[j];
+    }
+    sendData(getCurrentCmd, dataBuf, sizeof(dataBuf));
+  }
+}
+
+/*/////////////////////////////////////////////////////////
 sendList
 /////////////////////////////////////////////////////////*/
 void sendList()
 {
+  byte dataBuf[ROM_SIZE];
   for(int i=0; i<sensorsCount; i++)
+  {
+    for(int j=0; j<ROM_SIZE; j++)
     {
-      byte dataBuf[ROM_SIZE];
-      for(int j=0; j<ROM_SIZE; j++)
-      {
-        dataBuf[j] = sensorsList[i].rom[j];
-      }
-      sendData(searchCmd, dataBuf, sizeof(dataBuf));
+      dataBuf[j] = sensorsList[i].rom[j];
     }
+    sendData(searchCmd, dataBuf, sizeof(dataBuf));
+  }
 }
 
 /*/////////////////////////////////////////////////////////
@@ -315,14 +341,14 @@ void sendTemp()
 {
   if(readReadyToSend)
   {
+    byte dataBuf[READ_DATA_LENGTH];
     for(int i=0; i<sensorsCount; i++)
     {
-      byte dataBuf[READ_DATA_LENGTH];
       for(int j=0; j<ROM_SIZE; j++)
       {
         dataBuf[j] = sensorsList[i].rom[j];
       }
-      for(int j=0; j<4; j++)
+      for(int j=0; j<FLOAT_BYTE_COUNT; j++)
       {
         dataBuf[j+ROM_SIZE] = sensorsList[i].temp.bytes[j];
       }
@@ -511,7 +537,7 @@ void processCommand(bool cmdType)
   int cmd;
   bool cmdMatch = 0;
   unsigned char channel;
-  float current;
+  int current;
 
   inputParam1[0] = 0;
   inputParam2[0] = 0;
@@ -674,7 +700,7 @@ void processCommand(bool cmdType)
         {
           case CMD_TYPE_DEBUG:
             channel = atoi(inputParam1Ptr);
-            current = atof(inputParam2Ptr);
+            current = (int)(atof(inputParam2Ptr) * CURRENT_VAR_RATIO);
             if(channel < 0 || channel >= CURRENT_CHANNELS_COUNT)
             {
               Serial.print(F("Channel selected out of range (0 - ")); Serial.print(CURRENT_CHANNELS_COUNT - 1); Serial.println(")");
@@ -683,26 +709,40 @@ void processCommand(bool cmdType)
             setCurrent(current, channel);
           break;
           case CMD_TYPE_PROTOCOL:
-            byte channel = inputCmd[1];
-            float current = (float)(inputCmd[2])/10.0;
+            channel = inputCmd[1];
+            current = (int)(inputCmd[2]) * (CURRENT_VAR_RATIO / 10);
             setCurrent(current, channel);
           break;
         }
       break;
 
-      case calCurrentCmd:
-        calCurrent(atoi(inputParam1Ptr));
+      case getCurrentCmd:
+        if(protocolMode)
+        {
+          sendCurrent();
+        }
+        if(debugMode)
+        {
+          for(int i=0; i<CURRENT_CHANNELS_COUNT; i++)
+          {
+            Serial.print(F("Channel "));
+            Serial.print(i);
+            Serial.print(F(" current: "));
+            Serial.print((float)currentChannelList[i].current.value / CURRENT_VAR_RATIO);
+            Serial.println("A");
+          }
+        }
       break;
 
       case readScaleCmd:
         union
         {
           float value;
-          byte bytes[4];
+          byte bytes[FLOAT_BYTE_COUNT];
         }weight;
         weight.value = readScale(SCALE_AVERAGES_NUM);
-        byte dataBuf[4];
-        for(int i=0; i<4; i++)
+        byte dataBuf[FLOAT_BYTE_COUNT];
+        for(int i=0; i<FLOAT_BYTE_COUNT; i++)
         {
           dataBuf[i] = weight.bytes[i];
         }
