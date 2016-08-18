@@ -14,7 +14,7 @@ def getCurrentCallback(channel, currentFloat):
 def readScaleCallback(weight):
 	print("Weight: %0.2f" % weight)
 
-parser = protocolParser('COM7', 115200)
+parser = protocolParser('COM4', 115200)
 parser.setCmdCallback(1, searchCallback)
 parser.setCmdCallback(2, readCallback)
 parser.setCmdCallback(9, getCurrentCallback)
@@ -45,9 +45,14 @@ while(True):
 		parser.listCmd()
 	elif(line.startswith("setcurrent")):
 		arguments = line.split()
-		channel = float(arguments[1])
 		current = float(arguments[2])
-		parser.setCurrentCmd(channel, current)
+		if(arguments[1] == "all"):
+			for i in range(0, 4):
+				channel = float(i)
+				parser.setCurrentCmd(channel, current)
+		else:
+			channel = float(arguments[1])
+			parser.setCurrentCmd(channel, current)
 	elif(line == "getcurrent"):
 		parser.getCurrentCmd()
 	elif(line == "readscale"):
